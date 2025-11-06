@@ -56,6 +56,7 @@ Notifications.setNotificationHandler({
 
 export default function App() {
   const [ready, setReady] = useState(false);
+  const [creating, setCreating] = useState(false);
   const [activeItems, setActiveItems] = useState<ActiveItem[]>([]);
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
   const [tab, setTab] = useState<'crear' | 'activas' | 'historial'>('crear');
@@ -188,6 +189,7 @@ export default function App() {
 
   const scheduleNotification = async (item: ActiveItem) => {
     if (Platform.OS === 'android' && (NativeModules as any)?.AndroidAlarm) {
+      console.log('[schedule] start', item);
       console.log('[schedule] android native', {
         id: item.id,
         type: item.type,
@@ -201,6 +203,7 @@ export default function App() {
         const delay = Math.max(0, item.triggerAt - Date.now());
         await (NativeModules as any).AndroidAlarm.scheduleTimer(item.id, delay, item.label || '');
       }
+      console.log('[schedule] done native');
       return undefined;
     }
     const triggerDate = new Date(item.triggerAt);
@@ -214,11 +217,14 @@ export default function App() {
       },
       trigger: { date: triggerDate, channelId: 'alarm_high_v1' },
     });
+    console.log('[schedule] done expo', identifier);
     return identifier;
   };
 
   // Creation with explicit inputs to avoid parent re-render during typing on some Android devices
   const onCreateWith = async (labelArg: string, timerOverride?: number) => {
+    if (creating) return;
+    setCreating(true);
     const now = Date.now();
     let triggerAt = now + (typeof timerOverride === 'number' ? timerOverride : timerMinutes) * 60 * 1000;
     if (mode === 'alarm') {
@@ -226,6 +232,7 @@ export default function App() {
     }
     if (triggerAt <= now) {
       Alert.alert('Fecha/hora inválida', 'Debes seleccionar un momento en el futuro.');
+      setCreating(false);
       return;
     }
     const item: ActiveItem = {
@@ -236,9 +243,13 @@ export default function App() {
       createdAt: now,
     };
     try {
-      const nid = await scheduleNotification(item);
+      console.log('[create] scheduling', item);
+      const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('schedule-timeout')), 8000));
+      const nid = await Promise.race([scheduleNotification(item), timeout]) as string | undefined;
+      console.log('[create] scheduled nid', nid);
       const next = [{ ...item, notificationId: nid }, ...activeItems].sort((a, b) => a.triggerAt - b.triggerAt);
       await saveActive(next);
+      console.log('[create] saved active');
       // reset form
       if (mode === 'timer') setTimerMinutes(10);
       setTab('activas');
@@ -246,6 +257,7 @@ export default function App() {
       console.error(e);
       Alert.alert('Error', 'No se pudo programar.');
     }
+    setCreating(false);
   };
 
   const cancelItemNotification = async (item: ActiveItem) => {
@@ -430,6 +442,7 @@ export default function App() {
       )}
       <Pressable
         style={styles.primaryButton}
+        disabled={creating}
         onPress={async () => {
           await onCreateWith(labelLocal, mode === 'timer' ? sliderVal : undefined);
           // limpiar sólo si se creó con éxito (tab cambia a activas)
@@ -437,7 +450,7 @@ export default function App() {
           if (mode === 'timer') setSliderVal(10);
         }}
       >
-        <Text style={styles.primaryButtonText}>Programar {mode === 'alarm' ? 'alarma' : 'temporizador'}</Text>
+        <Text style={styles.primaryButtonText}>{creating ? 'Programando…' : `Programar ${mode === 'alarm' ? 'alarma' : 'temporizador'}`}</Text>
       </Pressable>
     </View>
   ); };

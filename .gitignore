@@ -40,5 +40,17 @@ yarn-error.*
 /ios
 /android
 
-# Artefactos comprimidos
-*.tar.gz
+# Local build artifacts
+/build/
+/build-extract/
+/build-*.tar.gz
+/*.tar.gz
+
+# Android Gradle outputs (if android is tracked)
+android/**/build/
+android/.gradle/
+android/app/debug.keystore
+
+# EAS/Expo cache
+.eas/
+.expo-shared/

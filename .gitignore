@@ -54,3 +54,9 @@ android/app/debug.keystore
 # EAS/Expo cache
 .eas/
 .expo-shared/
+
+# Python virtual environments
+.venv/
+.venv-*/
+.venv-gfr/
+venv/

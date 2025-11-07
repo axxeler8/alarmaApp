@@ -1,58 +1,101 @@
-# App Alarma (Expo)
+# App Alarma (Expo + módulo nativo Android)
 
-App minimalista para Android hecha con Expo. Permite:
+App de alarma y temporizador para Android, basada en React Native/Expo con código nativo Android incluido. Características:
 
 - Crear una alarma para una fecha/hora específica (una sola vez)
-- Crear un temporizador de hasta 60 minutos
-- Texto/nota opcional en cada uno
-- Editar alarmas (fecha/hora y texto); los temporizadores solo permiten editar el texto
+- Crear un temporizador (1–60 min)
+- Texto/nota opcional
+- Editar alarmas (fecha/hora y texto). En temporizador, editar texto
 - Eliminar elementos activos
-- Al dispararse, puedes Posponer 5/10/15 minutos o Desactivar
-- Al desactivar, pasa a Historial y se elimina de Activas
+- Al disparar: Posponer 5/10/15 min o Desactivar
+- Historial con conteo de pospuestos
 
-Diseño en tonalidades azules y enfoque "abrir, poner y listo".
+Diseño simple en tonos azules, pensado para “abrir, poner y listo”.
 
 ## Requisitos
 
-- Node.js 20.x recomendado (las toolchains de RN/Metro nuevas lo piden). Con Node 18 funciona con warnings.
-- Dispositivo Android (o emulador) con la app de Expo Go o un Dev Client.
+- Node.js 18 o 20 (recomendado 20.x)
+- Android SDK instalado (Gradle/SDK Tools). Emulador o dispositivo físico
+- Expo CLI (opcional para Metro/dev), pero OJO: esta app usa código nativo propio, por lo que Expo Go no es suficiente. Se requiere build nativo (Gradle) o Development Build.
 
-## Ejecutar
+## Instalación y ejecución (desarrollo)
 
 ```bash
-# Instalar dependencias (ya se instalaron al crear el proyecto)
+# 1) Dependencias JS
 npm install
 
-# Iniciar el servidor de desarrollo
-npx expo start
+# 2) Compilar e instalar en Android (debug)
+cd android
+./gradlew installDebug
 
-# Android: abre la app con Expo Go (escaneando QR) o usa 'a' para emulador.
+# (Opcional) Iniciar Metro para recarga JS
+cd ..
+npx expo start
 ```
 
-## Notas importantes (Android)
+Importante: debido al módulo nativo Android, la app no corre en Expo Go. Usa un emulador/dispositivo y compila con Gradle o crea una Development Build.
 
-- La app usa `expo-notifications` para programar notificaciones con sonido y alta prioridad.
-- Esto se acerca al comportamiento de una alarma nativa, pero por limitaciones de Expo/Android:
-  - No muestra pantalla de alarma de pantalla completa automáticamente sobre la pantalla de bloqueo.
-  - No puede ignorar el modo No molestar (DND) ni garantizar volumen máximo.
-- Al tocar la notificación, la app abre una pantalla de "sonando" donde puedes posponer/descartar.
+## Builds Release
 
-Si deseas comportamiento 100% nativo (pantalla completa tipo reloj, `AlarmManager#setAlarmClock`, exact alarms, etc.), puedo migrar este proyecto a un build de desarrollo con un plugin nativo para Android. Eso requiere una **development build** de Expo o prebuild con EAS y permisos especiales.
+```bash
+# APK release e instalar en dispositivo
+cd android
+./gradlew assembleRelease
+./gradlew installRelease
 
-## Estructura
+# Generar AAB para Play Store
+./gradlew bundleRelease
+# Salida: android/app/build/outputs/bundle/release/app-release.aab
+```
 
-- `App.tsx`: UI y lógica principal (crear, listar, historial, posponer, desactivar)
-- AsyncStorage: persistencia de elementos activos e historial
-- `expo-notifications`: canal Android `alarm` con prioridad máxima
+Firma: actualmente la configuración de `release` utiliza el keystore de debug (solo para pruebas). Para publicar:
 
-## Limitaciones implementadas según requisitos
+1) Genera una keystore de producción (NO la subas al repo):
+   - keytool -genkeypair -v -storetype JKS -keystore my-release-key.jks -alias my-alias -keyalg RSA -keysize 2048 -validity 10000
+2) Configura `signingConfigs.release` en `android/app/build.gradle` apuntando a tu keystore y variables (usa `gradle.properties` o env vars)
+3) Recompila `bundleRelease` para subir a Play Console
 
-- Alarmas son de una sola vez (sin repetir)
-- Temporizadores no se reprograman (solo texto y eliminar)
-- Al desactivar, se mueven a historial
+## Permisos y comportamiento Android
 
-## Siguientes pasos opcionales
+- Notificaciones: se solicita permiso en Android 13+ para mostrar notificaciones (expo-notifications)
+- Alarmas exactas: en Android 12+ (API 31) se solicita “Schedule exact alarms”. La app abre el intent de sistema si no está concedido
+- Sonido/actividad de pantalla completa: al disparar, se lanza `AlarmRingingActivity` (pantalla nativa), reproduce tono de alarma y muestra botones de Posponer/Desactivar, incluso sobre la pantalla de bloqueo
 
-- Development build + módulo nativo para pantalla completa y `AlarmManager`
-- Sonido de alarma en bucle dentro de la app (requiere `expo-av` y un asset de audio)
-- Icono de notificación personalizado para el canal
+### Posponer/Desactivar y sincronización con la UI
+
+- La actividad nativa emite un evento (`alarmActivityAction`) con `id`, `action` y `triggerAt` (en caso de posponer)
+- `App.tsx` escucha el evento vía `DeviceEventEmitter` y actualiza la lista de Activas
+- Para evitar carreras en arranque (evento llega antes de cargar AsyncStorage), se usa una cola de acciones pendientes: al cargar datos, la UI procesa y refleja el nuevo horario
+
+## Arquitectura y archivos relevantes
+
+- `App.tsx`: UI, estado (Activas/Historial), persistencia en AsyncStorage, manejo de notificaciones y eventos nativos
+- `android/app/src/main/java/com/anonymous/appalarma/AlarmModule.kt`: Módulo nativo RN
+  - Programa alarmas/temporizadores con `AlarmManager.setExactAndAllowWhileIdle`
+  - Registra canal de notificación y receptor interno para acciones
+  - Entrega acciones a JS vía `DeviceEventEmitter`
+- `android/app/src/main/java/com/anonymous/appalarma/AlarmReceiver.kt`: Receiver que lanza la actividad de “sonando”
+- `android/app/src/main/java/com/anonymous/appalarma/AlarmRingingActivity.kt`: Actividad de pantalla completa con botones de posponer/desactivar y reproducción de tono
+
+Claves de almacenamiento:
+- Activas: `appalarma.activeItems.v1`
+- Historial: `appalarma.historyItems.v1`
+
+## Git: qué se versiona
+
+- La carpeta `android/` SE versiona porque contiene código nativo propio (módulo/actividad/receptor)
+- En `.gitignore` se excluyen solo artefactos de build: `android/**/build/`, `android/.gradle/`, `*.apk`, `*.aab`, `debug.keystore`, etc.
+
+## Solución de problemas
+
+- “Posponer no actualiza la hora en Activas” → corregido: hay cola anti-carreras; si persiste, abre la app y espera 1–2 s para que procese acciones pendientes
+- “No suena/No muestra sobre lock screen” → revisa permisos de notificaciones y exact alarms. En algunos fabricantes (ej. Xiaomi) desactiva optimizaciones de batería para la app
+- “NODE_ENV warning en build” → es un warning de `expo-constants`. No bloquea el build
+- “Expo Go no abre la app” → esta app requiere build nativo o Development Build por tener módulo nativo
+
+## Roadmap opcional
+
+- Repeticiones de alarma (diaria, días de semana)
+- UI para seleccionar tono propio
+- Icono de notificación y recursos adaptativos
+- Integración iOS (si se añade nativo para iOS, conviene versionar `ios/`)

@@ -37,8 +37,9 @@ yarn-error.*
 *.tsbuildinfo
 
 # generated native folders
+# Nota: en este proyecto SÍ hay código nativo propio en android/ (AlarmModule, Activities, etc),
+# por lo que NO debemos ignorar la carpeta completa. Ignoramos sólo artefactos de build.
 /ios
-/android
 
 # Local build artifacts
 /build/

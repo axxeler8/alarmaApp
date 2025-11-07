@@ -239,6 +239,8 @@ export default function App() {
   const historyItemsRef = useRef<HistoryItem[]>([]);
   const [tab, setTab] = useState<'crear' | 'activas' | 'historial'>('crear');
   const activeItemsRef = useRef<ActiveItem[]>([]);
+  // Cola para eventos nativos recibidos antes de tener activeItems cargados
+  const pendingNativeActionsRef = useRef<Array<{ id: string; action: 'dismiss' | 'snooze'; triggerAt?: number }>>([]);
 
   // Create form state
   const [mode, setMode] = useState<ItemType>('alarm');
@@ -300,6 +302,37 @@ export default function App() {
     let sub1: Notifications.Subscription | undefined;
     let sub2: Notifications.Subscription | undefined;
     (async () => {
+      // Prepare native action handler and subscribe ASAP to avoid missing early events
+      const handleNativeAction = async (ev: any) => {
+        try {
+          console.log('[native-action]', ev);
+          const { id, action, triggerAt } = ev || {};
+          if (!id || !action) return;
+          const item = activeItemsRef.current.find((i) => i.id === id);
+          if (!item) {
+            // Aún no cargó la lista; encolar para reprocesar tras load
+            console.log('[native-action] item not found, queueing until ready', id);
+            pendingNativeActionsRef.current.push({ id, action, triggerAt: triggerAt ? Number(triggerAt) : undefined } as any);
+            return;
+          }
+          if (action === 'dismiss') {
+            await cancelItemNotification(item);
+            await moveToHistory(item);
+            setTab('historial');
+          } else if (action === 'snooze' && triggerAt) {
+            const updated: ActiveItem = { ...item, triggerAt: Number(triggerAt) };
+            snoozeCountsRef.current[id] = (snoozeCountsRef.current[id] || 0) + 1;
+            await updateItem(updated);
+          }
+        } catch (err) {
+          console.warn('[native-action] failed handling', err);
+        }
+      };
+
+      if (Platform.OS === 'android') {
+        sub3 = DeviceEventEmitter.addListener('alarmActivityAction', handleNativeAction);
+      }
+
       await loadData();
       // Android setup
       if (Platform.OS === 'android') {
@@ -322,26 +355,7 @@ export default function App() {
           const ok = await NativeModules?.AndroidAlarm?.checkExactAlarmPermission?.();
           if (!ok) NativeModules?.AndroidAlarm?.requestExactAlarmPermission?.();
         } catch {}
-        // Listen to actions from the full-screen activity
-        sub3 = DeviceEventEmitter.addListener('alarmActivityAction', async (e: any) => {
-          console.log('[native-action]', e);
-          const { id, action, triggerAt } = e || {};
-          const item = activeItemsRef.current.find((i) => i.id === id);
-          if (!item) {
-            console.log('[native-action] item not found in active list', id);
-            return;
-          }
-          if (action === 'dismiss') {
-            // Ensure any pending schedule is cancelled, then move to history and show that tab.
-            await cancelItemNotification(item);
-            await moveToHistory(item);
-            setTab('historial');
-          } else if (action === 'snooze' && triggerAt) {
-            const updated: ActiveItem = { ...item, triggerAt: Number(triggerAt) };
-            snoozeCountsRef.current[id] = (snoozeCountsRef.current[id] || 0) + 1;
-            await updateItem(updated);
-          }
-        });
+        // (Listener ya registrado antes de loadData)
       } else {
         // iOS / web: request permissions and wire listeners
         try {
@@ -371,6 +385,32 @@ export default function App() {
       sub2?.remove?.();
     };
   }, [loadData]);
+
+  // Cuando los datos están listos o cambian las listas, intenta vaciar la cola de acciones pendientes
+  useEffect(() => {
+    if (!ready) return;
+    if (pendingNativeActionsRef.current.length === 0) return;
+    const pending = pendingNativeActionsRef.current.splice(0, pendingNativeActionsRef.current.length);
+    (async () => {
+      for (const ev of pending) {
+        const item = activeItemsRef.current.find(i => i.id === ev.id);
+        if (!item) {
+          // Si aún no existe, re-encolar y probaremos de nuevo al siguiente cambio
+          pendingNativeActionsRef.current.push(ev);
+          continue;
+        }
+        if (ev.action === 'dismiss') {
+          await cancelItemNotification(item);
+          await moveToHistory(item);
+          setTab('historial');
+        } else if (ev.action === 'snooze' && ev.triggerAt) {
+          const updated: ActiveItem = { ...item, triggerAt: Number(ev.triggerAt) };
+          snoozeCountsRef.current[ev.id] = (snoozeCountsRef.current[ev.id] || 0) + 1;
+          await updateItem(updated);
+        }
+      }
+    })();
+  }, [ready, activeItems]);
 
   // Helpers
   const genId = () => Math.random().toString(36).slice(2) + Date.now().toString(36);

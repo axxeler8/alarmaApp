@@ -45,6 +45,10 @@ yarn-error.*
 /build-extract/
 /build-*.tar.gz
 /*.tar.gz
+debug/
+release/
+*.apk
+*.aab
 
 # Android Gradle outputs (if android is tracked)
 android/**/build/

@@ -54,11 +54,189 @@ Notifications.setNotificationHandler({
   }),
 });
 
+type CreateFormProps = {
+  mode: ItemType;
+  setMode: (m: ItemType) => void;
+  alarmDate: Date;
+  setAlarmDate: (d: Date) => void;
+  showDatePicker: boolean;
+  setShowDatePicker: (v: boolean) => void;
+  showTimePicker: boolean;
+  setShowTimePicker: (v: boolean) => void;
+  timerMinutes: number;
+  setTimerMinutes: (n: number) => void;
+  creating: boolean;
+  onCreateWith: (labelArg: string, timerOverride?: number) => Promise<void> | void;
+};
+
+// Stable, top-level component so its local state (label/slider) doesn't reset when the parent re-renders
+const CreateForm: React.FC<CreateFormProps> = ({
+  mode,
+  setMode,
+  alarmDate,
+  setAlarmDate,
+  showDatePicker,
+  setShowDatePicker,
+  showTimePicker,
+  setShowTimePicker,
+  timerMinutes,
+  setTimerMinutes,
+  creating,
+  onCreateWith,
+}) => {
+  const [sliderVal, setSliderVal] = useState<number>(timerMinutes);
+  const labelRef = useRef<TextInput>(null);
+  const [labelFocused, setLabelFocused] = useState(false);
+  const [labelLocal, setLabelLocal] = useState('');
+  const SliderComp: any = useMemo(() => {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      return require('@react-native-community/slider').default;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (mode === 'timer') setSliderVal(timerMinutes);
+  }, [mode, timerMinutes]);
+
+  return (
+    <View style={{ gap: 16 }}>
+      <View style={styles.switchRow}>
+        <Pressable onPress={() => setMode('alarm')} style={[styles.modeButton, mode === 'alarm' && styles.modeButtonActive]}>
+          <Text style={[styles.modeText, mode === 'alarm' && styles.modeTextActive]}>Alarma</Text>
+        </Pressable>
+        <Pressable onPress={() => setMode('timer')} style={[styles.modeButton, mode === 'timer' && styles.modeButtonActive]}>
+          <Text style={[styles.modeText, mode === 'timer' && styles.modeTextActive]}>Temporizador</Text>
+        </Pressable>
+      </View>
+
+      <View>
+        <Text style={styles.label}>Texto (opcional)</Text>
+        <TextInput
+          ref={labelRef}
+          value={labelLocal}
+          onChangeText={setLabelLocal}
+          placeholder={mode === 'alarm' ? 'p. ej. Tomar medicina' : 'p. ej. Hervir agua'}
+          placeholderTextColor="#9fb6d9"
+          style={styles.input}
+          blurOnSubmit={false}
+          returnKeyType="done"
+          autoCorrect={false}
+          autoComplete="off"
+          textContentType="none"
+          importantForAutofill="no"
+          keyboardType="default"
+          disableFullscreenUI
+          onFocus={() => setLabelFocused(true)}
+          onBlur={() => setLabelFocused(false)}
+          onChange={(e) => {
+            if (Platform.OS === 'android') {
+              requestAnimationFrame(() => {
+                if (labelFocused) labelRef.current?.focus();
+              });
+            }
+          }}
+        />
+      </View>
+
+      {mode === 'alarm' ? (
+        <View style={{ gap: 8 }}>
+          <Text style={styles.label}>Fecha y hora</Text>
+          <View style={styles.row}>
+            <Pressable style={styles.pickerButton} onPress={() => setShowDatePicker(true)}>
+              <Text style={styles.pickerButtonText}>{alarmDate.toLocaleDateString()}</Text>
+            </Pressable>
+            <Pressable style={styles.pickerButton} onPress={() => setShowTimePicker(true)}>
+              <Text style={styles.pickerButtonText}>{alarmDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
+            </Pressable>
+          </View>
+          {showDatePicker && (
+            <DateTimePicker
+              value={alarmDate}
+              mode="date"
+              display="default"
+              onChange={(_, d) => {
+                setShowDatePicker(false);
+                if (d) {
+                  const nd = new Date(alarmDate);
+                  nd.setFullYear(d.getFullYear(), d.getMonth(), d.getDate());
+                  setAlarmDate(nd);
+                }
+              }}
+            />
+          )}
+          {showTimePicker && (
+            <DateTimePicker
+              value={alarmDate}
+              mode="time"
+              is24Hour
+              display="default"
+              onChange={(_, d) => {
+                setShowTimePicker(false);
+                if (d) {
+                  const nd = new Date(alarmDate);
+                  nd.setHours(d.getHours(), d.getMinutes(), 0, 0);
+                  setAlarmDate(nd);
+                }
+              }}
+            />
+          )}
+        </View>
+      ) : (
+        <View>
+          <Text style={styles.label}>Minutos: {sliderVal}</Text>
+          {SliderComp ? (
+            <SliderComp
+              value={sliderVal}
+              minimumValue={1}
+              maximumValue={60}
+              step={1}
+              minimumTrackTintColor="#2a5ea9"
+              maximumTrackTintColor="#1b3a63"
+              thumbTintColor="#e6f0ff"
+              animateTransitions
+              style={styles.slider}
+              onValueChange={(v: number) => setSliderVal(Math.max(1, Math.min(60, Math.round(v))))}
+              onSlidingComplete={(v: number) => setTimerMinutes(Math.max(1, Math.min(60, Math.round(v))))}
+            />
+          ) : (
+            <View style={[styles.rowBetween, { marginTop: 8 }]} >
+              <Pressable style={styles.chip} onPress={() => setSliderVal(v => Math.max(1, v - 1))}>
+                <Text style={styles.chipText}>-</Text>
+              </Pressable>
+              <Text style={styles.itemTitle}>{sliderVal} min</Text>
+              <Pressable style={styles.chip} onPress={() => setSliderVal(v => Math.min(60, v + 1))}>
+                <Text style={styles.chipText}>+</Text>
+              </Pressable>
+            </View>
+          )}
+        </View>
+      )}
+
+      <Pressable
+        style={styles.primaryButton}
+        disabled={creating}
+        onPress={async () => {
+          await onCreateWith(labelLocal, mode === 'timer' ? sliderVal : undefined);
+          // limpiar como antes
+          setLabelLocal('');
+          if (mode === 'timer') setSliderVal(10);
+        }}
+      >
+        <Text style={styles.primaryButtonText}>{creating ? 'Programando…' : `Programar ${mode === 'alarm' ? 'alarma' : 'temporizador'}`}</Text>
+      </Pressable>
+    </View>
+  );
+};
+
 export default function App() {
   const [ready, setReady] = useState(false);
   const [creating, setCreating] = useState(false);
   const [activeItems, setActiveItems] = useState<ActiveItem[]>([]);
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
+  const historyItemsRef = useRef<HistoryItem[]>([]);
   const [tab, setTab] = useState<'crear' | 'activas' | 'historial'>('crear');
   const activeItemsRef = useRef<ActiveItem[]>([]);
 
@@ -106,6 +284,9 @@ export default function App() {
   useEffect(() => {
     activeItemsRef.current = activeItems;
   }, [activeItems]);
+  useEffect(() => {
+    historyItemsRef.current = historyItems;
+  }, [historyItems]);
 
 
   const saveHistory = useCallback(async (items: HistoryItem[]) => {
@@ -143,11 +324,18 @@ export default function App() {
         } catch {}
         // Listen to actions from the full-screen activity
         sub3 = DeviceEventEmitter.addListener('alarmActivityAction', async (e: any) => {
+          console.log('[native-action]', e);
           const { id, action, triggerAt } = e || {};
           const item = activeItemsRef.current.find((i) => i.id === id);
-          if (!item) return;
+          if (!item) {
+            console.log('[native-action] item not found in active list', id);
+            return;
+          }
           if (action === 'dismiss') {
+            // Ensure any pending schedule is cancelled, then move to history and show that tab.
+            await cancelItemNotification(item);
             await moveToHistory(item);
+            setTab('historial');
           } else if (action === 'snooze' && triggerAt) {
             const updated: ActiveItem = { ...item, triggerAt: Number(triggerAt) };
             snoozeCountsRef.current[id] = (snoozeCountsRef.current[id] || 0) + 1;
@@ -247,7 +435,8 @@ export default function App() {
       const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('schedule-timeout')), 8000));
       const nid = await Promise.race([scheduleNotification(item), timeout]) as string | undefined;
       console.log('[create] scheduled nid', nid);
-      const next = [{ ...item, notificationId: nid }, ...activeItems].sort((a, b) => a.triggerAt - b.triggerAt);
+  const current = activeItemsRef.current;
+  const next = [{ ...item, notificationId: nid }, ...current].sort((a, b) => a.triggerAt - b.triggerAt);
       await saveActive(next);
       console.log('[create] saved active');
       // reset form
@@ -269,25 +458,30 @@ export default function App() {
   };
 
   const deleteItem = async (id: string) => {
-    const item = activeItems.find(i => i.id === id);
+    const item = activeItemsRef.current.find(i => i.id === id);
     if (!item) return;
     await cancelItemNotification(item);
-    await saveActive(activeItems.filter(i => i.id !== id));
+    const current = activeItemsRef.current;
+    await saveActive(current.filter(i => i.id !== id));
   };
 
   const updateItem = async (updated: ActiveItem) => {
     // Cancel previous schedule then reschedule
     await cancelItemNotification(updated);
     const nid = await scheduleNotification(updated);
-    const next = activeItems.map(i => (i.id === updated.id ? { ...updated, notificationId: nid } : i)).sort((a,b)=>a.triggerAt-b.triggerAt);
+    const current = activeItemsRef.current;
+    const next = current.map(i => (i.id === updated.id ? { ...updated, notificationId: nid } : i)).sort((a,b)=>a.triggerAt-b.triggerAt);
     await saveActive(next);
   };
 
   const moveToHistory = async (item: ActiveItem) => {
     const firedAt = Date.now();
     const hist: HistoryItem = { id: item.id, type: item.type, label: item.label, createdAt: item.createdAt, firedAt, snoozes: snoozeCountsRef.current[item.id] || 0 };
-    await saveHistory([hist, ...historyItems]);
-    await saveActive(activeItems.filter(i => i.id !== item.id));
+    // Use latest ref to avoid stale closure overwriting previous history
+    const currentHistory = historyItemsRef.current;
+    await saveHistory([hist, ...currentHistory]);
+    const currentActive = activeItemsRef.current;
+    await saveActive(currentActive.filter(i => i.id !== item.id));
   };
 
   const onSnooze = async (minutes: number) => {
@@ -305,6 +499,7 @@ export default function App() {
     await cancelItemNotification(ringingItem);
     await moveToHistory(ringingItem);
     setRingingItemId(null);
+    setTab('historial');
   };
 
   // UI Helpers
@@ -324,136 +519,6 @@ export default function App() {
       </Pressable>
     </View>
   );
-
-  const CreateForm = () => {
-    const [sliderVal, setSliderVal] = useState<number>(timerMinutes);
-    const labelRef = useRef<TextInput>(null);
-    const [labelFocused, setLabelFocused] = useState(false);
-    const [labelLocal, setLabelLocal] = useState('');
-    useEffect(() => {
-      if (mode === 'timer') setSliderVal(timerMinutes);
-    }, [mode, timerMinutes]);
-
-    return (
-    <View style={{ gap: 16 }}>
-      <ModeSwitch />
-      <View>
-        <Text style={styles.label}>Texto (opcional)</Text>
-        <TextInput
-          ref={labelRef}
-          value={labelLocal}
-          onChangeText={setLabelLocal}
-          placeholder={mode === 'alarm' ? 'p. ej. Tomar medicina' : 'p. ej. Hervir agua'}
-          placeholderTextColor="#9fb6d9"
-          style={styles.input}
-          blurOnSubmit={false}
-          returnKeyType="done"
-          autoCorrect={false}
-          autoComplete="off"
-          textContentType="none"
-          importantForAutofill="no"
-          keyboardType="default"
-          disableFullscreenUI
-          onFocus={() => setLabelFocused(true)}
-          onBlur={() => setLabelFocused(false)}
-          onChange={(e) => {
-            // En algunos Android, el primer carácter puede provocar un blur
-            // Forzamos el focus de nuevo si estaba enfocado
-            if (Platform.OS === 'android') {
-              requestAnimationFrame(() => {
-                if (labelFocused) labelRef.current?.focus();
-              });
-            }
-          }}
-        />
-      </View>
-      {mode === 'alarm' ? (
-        <View style={{ gap: 8 }}>
-          <Text style={styles.label}>Fecha y hora</Text>
-          <View style={styles.row}>
-            <Pressable style={styles.pickerButton} onPress={() => setShowDatePicker(true)}>
-              <Text style={styles.pickerButtonText}>{alarmDate.toLocaleDateString()}</Text>
-            </Pressable>
-            <Pressable style={styles.pickerButton} onPress={() => setShowTimePicker(true)}>
-              <Text style={styles.pickerButtonText}>{alarmDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
-            </Pressable>
-          </View>
-          {showDatePicker && (
-            <DateTimePicker
-              value={alarmDate}
-              mode="date"
-              display="default"
-              onChange={(_, d) => {
-                setShowDatePicker(false);
-                if (d) {
-                  const nd = new Date(alarmDate);
-                  nd.setFullYear(d.getFullYear(), d.getMonth(), d.getDate());
-                  setAlarmDate(nd);
-                }
-              }}
-            />
-          )}
-          {showTimePicker && (
-            <DateTimePicker
-              value={alarmDate}
-              mode="time"
-              is24Hour
-              display="default"
-              onChange={(_, d) => {
-                setShowTimePicker(false);
-                if (d) {
-                  const nd = new Date(alarmDate);
-                  nd.setHours(d.getHours(), d.getMinutes(), 0, 0);
-                  setAlarmDate(nd);
-                }
-              }}
-            />
-          )}
-        </View>
-      ) : (
-        <View>
-          <Text style={styles.label}>Minutos: {sliderVal}</Text>
-          {SliderComp ? (
-            <SliderComp
-              value={sliderVal}
-              minimumValue={1}
-              maximumValue={60}
-              step={1}
-              minimumTrackTintColor="#2a5ea9"
-              maximumTrackTintColor="#1b3a63"
-              thumbTintColor="#e6f0ff"
-              animateTransitions
-              style={styles.slider}
-              onValueChange={(v: number) => setSliderVal(Math.max(1, Math.min(60, Math.round(v))))}
-              onSlidingComplete={(v: number) => setTimerMinutes(Math.max(1, Math.min(60, Math.round(v))))}
-            />
-          ) : (
-            <View style={[styles.rowBetween, { marginTop: 8 }] }>
-              <Pressable style={styles.chip} onPress={() => setSliderVal(v => Math.max(1, v - 1))}>
-                <Text style={styles.chipText}>-</Text>
-              </Pressable>
-              <Text style={styles.itemTitle}>{sliderVal} min</Text>
-              <Pressable style={styles.chip} onPress={() => setSliderVal(v => Math.min(60, v + 1))}>
-                <Text style={styles.chipText}>+</Text>
-              </Pressable>
-            </View>
-          )}
-        </View>
-      )}
-      <Pressable
-        style={styles.primaryButton}
-        disabled={creating}
-        onPress={async () => {
-          await onCreateWith(labelLocal, mode === 'timer' ? sliderVal : undefined);
-          // limpiar sólo si se creó con éxito (tab cambia a activas)
-          setLabelLocal('');
-          if (mode === 'timer') setSliderVal(10);
-        }}
-      >
-        <Text style={styles.primaryButtonText}>{creating ? 'Programando…' : `Programar ${mode === 'alarm' ? 'alarma' : 'temporizador'}`}</Text>
-      </Pressable>
-    </View>
-  ); };
 
   const ItemRow = ({ item }: { item: ActiveItem }) => (
     <View style={styles.itemRow}>
@@ -498,6 +563,27 @@ export default function App() {
     setEditing(null);
   };
 
+  // History actions
+  const clearHistory = async () => {
+    Alert.alert(
+      'Eliminar historial',
+      '¿Seguro que quieres eliminar todo el historial? Esta acción no se puede deshacer.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Eliminar', style: 'destructive', onPress: async () => {
+          await saveHistory([]);
+        } },
+      ],
+      { cancelable: true }
+    );
+  };
+
+  const deleteHistoryItem = async (item: HistoryItem) => {
+    const current = historyItemsRef.current;
+    const next = current.filter(h => !(h.id === item.id && h.firedAt === item.firedAt));
+    await saveHistory(next);
+  };
+
   return (
     <SafeAreaProvider>
     <SafeAreaView style={styles.container}>
@@ -522,7 +608,20 @@ export default function App() {
             keyboardShouldPersistTaps="handled"
             contentContainerStyle={{ paddingBottom: 24 }}
           >
-            <CreateForm />
+            <CreateForm
+              mode={mode}
+              setMode={setMode}
+              alarmDate={alarmDate}
+              setAlarmDate={setAlarmDate}
+              showDatePicker={showDatePicker}
+              setShowDatePicker={setShowDatePicker}
+              showTimePicker={showTimePicker}
+              setShowTimePicker={setShowTimePicker}
+              timerMinutes={timerMinutes}
+              setTimerMinutes={setTimerMinutes}
+              creating={creating}
+              onCreateWith={onCreateWith}
+            />
           </KeyboardAwareScrollView>
         )}
 
@@ -543,20 +642,33 @@ export default function App() {
           historyItems.length === 0 ? (
             <Text style={styles.empty}>Aún no hay historial.</Text>
           ) : (
-            <FlatList
-              data={historyItems}
-              keyExtractor={(i) => i.id + i.firedAt}
-              renderItem={({ item }) => (
-                <View style={styles.historyRow}>
-                  <Text style={styles.itemTitle}>{item.type === 'alarm' ? 'Alarma' : 'Temporizador'} • {new Date(item.firedAt).toLocaleString()}</Text>
-                  {!!item.label && <Text style={styles.itemSubtitle}>{item.label}</Text>}
-                  {!!item.snoozes && item.snoozes > 0 && (
-                    <Text style={styles.itemMeta}>Pospuestos: {item.snoozes}</Text>
-                  )}
-                </View>
-              )}
-              contentContainerStyle={{ gap: 12 }}
-            />
+            <>
+              <View style={[styles.rowBetween, { marginBottom: 8 }]}>
+                <View />
+                <Pressable style={styles.dangerButton} onPress={clearHistory}>
+                  <Text style={styles.dangerButtonText}>Eliminar historial</Text>
+                </Pressable>
+              </View>
+              <FlatList
+                data={historyItems}
+                keyExtractor={(i) => i.id + i.firedAt}
+                renderItem={({ item }) => (
+                  <View style={[styles.historyRow, { gap: 6 }]}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.itemTitle}>{item.type === 'alarm' ? 'Alarma' : 'Temporizador'} • {new Date(item.firedAt).toLocaleString()}</Text>
+                      {!!item.label && <Text style={styles.itemSubtitle}>{item.label}</Text>}
+                      {!!item.snoozes && item.snoozes > 0 && (
+                        <Text style={styles.itemMeta}>Pospuestos: {item.snoozes}</Text>
+                      )}
+                    </View>
+                    <Pressable style={styles.dangerButton} onPress={() => deleteHistoryItem(item)}>
+                      <Text style={styles.dangerButtonText}>Eliminar</Text>
+                    </Pressable>
+                  </View>
+                )}
+                contentContainerStyle={{ gap: 12 }}
+              />
+            </>
           )
         )}
       </View>
